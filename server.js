@@ -1,39 +1,58 @@
-import Koa from 'koa'
+import util from 'util'
 import os from 'os'
-import { exec } from 'child_process'
-import Router from 'koa-router'
-import mount from 'koa-mount'
-import serve from 'koa-static'
+import cp from 'child_process'
+import http from 'http'
 
-import api from './api'
+import app from './app'
 
-const startServer = async () => {
-    const app = new Koa()
-    const router = new Router()
-    router.use('/api', api.routes())
+class Server extends http.Server {
+    constructor(...params) {
+        super(...params)
 
-    const PORT = process.env.PORT || 4000
-
-    let HOSTNAME
-    if (os.platform() == 'linux') {
-        HOSTNAME = await exec('hostname -i', (error, stdout, stderr) => {
-            if (!error & !stderr) {
-                console.log('host: %s', stdout)
-            } else {
-                console.log(error, stderr)
-            }
-        })
-    } else {
-        HOSTNAME = 'localhost'
+        this.onServers = []
     }
 
-    const static_pages = new Koa()
-    static_pages.use(serve('static'))
-    app.use(mount('/', static_pages)).use(router.routes())
+    listen(port, ...args) {
+        const server = super.listen(port, ...args)
+        this.onServers.push(server)
+        return server
+    }
 
-    app.listen(PORT, HOSTNAME, () => {
-        console.log('==> 🌎  Listening on port %s.', PORT)
-    })
+    async terminate() {
+        for (const server of this.onServers) {
+            server.close()
+        }
+        console.log('servers terminated')
+    }
 }
 
-startServer()
+/**
+ * 서버 listening 할 호스트에 영향 없음.
+ * 서버에는 hostname을 안넘겨주기 때문에
+ * localhost, 172.17.0.x 양쪽으로 리스닝 함.
+ */
+const showListeningLocation = async () => {
+    let hostname
+    const exec = util.promisify(cp.exec)
+    if (os.platform() == 'linux') {
+        const { stdout, stderr } = await exec('hostname -i')
+        if (stderr) {
+            hostname = 'localhost'
+        } else {
+            hostname = stdout.trim()
+        }
+    } else {
+        hostname = 'localhost'
+    }
+    console.log(`==> 🌎  Listening on http://${hostname}:${port}`)
+}
+
+const port = process.env.PORT || 4000
+
+const server = new Server(app().callback())
+export default server
+
+if (require.main === module) {
+    
+    server.listen(port, showListeningLocation)
+}
